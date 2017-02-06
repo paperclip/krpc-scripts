@@ -8,6 +8,11 @@ import time
 NIGHT_TIMER=10
 
 def main(argv):
+	if len(argv) > 1:
+		actionGroup = int(argv[1])
+	else:
+		actionGroup = 2
+	
 	conn = krpc.connect(name='Mine Control') ## krpc.client.Client
 	space_center = conn.space_center
 	vessel = space_center.active_vessel
@@ -45,21 +50,22 @@ def main(argv):
 					
 		if powered and not mining:
 			space_center.rails_warp_factor = 0
-			vessel.control.toggle_action_group(1)
+			vessel.control.toggle_action_group(actionGroup) ## Action group to start mining
 			mining = True
 			space_center.rails_warp_factor = 5
 		elif mining and not powered:
 			mining = False
-			space_center.rails_warp_factor = 6
 			
 		if powered:
 			if nighttime > 0:
-				print("Night-time lasted %d seconds at warp 5"%(nighttime))
+				print("Night-time lasted %d seconds"%(nighttime))
 			nighttime=0
 		else:
 			nighttime += 1
-			if nighttime >= 3:
+			if nighttime >= 7:
 				space_center.rails_warp_factor = 5
+			else:
+				space_center.rails_warp_factor = 6
 				
 			
 	return 0
