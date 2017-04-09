@@ -2,14 +2,22 @@
 from __future__ import print_function,division,absolute_import,unicode_literals
 
 import krpc
+
+import argparse
 import sys
 import time
 
 HIGH_SPEED =5
 
+def parseArgs(argv):
+    parser = argparse.ArgumentParser(description="KRPC miner")
+    parser.add_argument('-a','--address',default="127.0.0.1")
+    args = parser.parse_args(argv[1:])
+    return args
+
 class Miner2(object):
-    def __init__(self):
-        pass
+    def __init__(self, argv):
+        self.__m_args = parseArgs(argv)
 
     def isFull(self):
         vessel = self.m_vessel
@@ -121,7 +129,7 @@ class Miner2(object):
 
     def run(self):
         print(krpc.__version__)
-        conn = krpc.connect(name='Miner2') ## krpc.client.Client
+        conn = krpc.connect(name='Miner2',address=self.__m_args.address) ## krpc.client.Client
         self.m_conn = conn
         self.m_alarmClock = conn.kerbal_alarm_clock
 
@@ -200,7 +208,7 @@ class Miner2(object):
 
 
 def main(argv):
-    m = Miner2()
+    m = Miner2(argv)
     m.run()
 
 
