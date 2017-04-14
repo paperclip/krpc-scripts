@@ -6,6 +6,7 @@ from __future__ import print_function,division,absolute_import,unicode_literals
 import krpc
 import sys
 import time
+import math
 
 def getGeneration(vessel):
 	panels = vessel.parts.solar_panels
@@ -14,9 +15,162 @@ def getGeneration(vessel):
 		generation += panel.energy_flow
 	return generation
 	
-def setTargetDirectionFromNode(auto_pilot,node):
-	auto_pilot.target_direction = node.remaining_burn_vector(auto_pilot.reference_frame)
+class ExecutionInformation(object):
+	def __init__(self, vessel):
+		self.m_vessel = vessel
+		
+		auto_pilot = vessel.auto_pilot
+		auto_pilot.engage()
+		self.m_auto_pilot = auto_pilot
+		self.m_node_flight = None
+		
+	def currentRoll(self):
+		return self.m_node_flight.roll
+		
+	def roll(self, targetRoll=None):
+		if targetRoll is not None:
+			self.m_auto_pilot.target_roll = targetRoll
+		return self.currentRoll()
+		
+	def getGeneration(self):
+		return getGeneration(self.m_vessel)
+		
+	def getSolarCount(self):
+		return len(self.m_vessel.parts.solar_panels)
+		
+	def disengage_auto_pilot(self):
+		self.m_auto_pilot.disengage()
+		
 	
+SCREEN_RESOLUTION_WIDTH = 1800
+SCREEN_RESOLUTION_HEIGHT = 1052
+	
+class NodeInformation(ExecutionInformation):
+	def __init__(self, vessel):
+		super(NodeInformation,self).__init__(vessel)
+		
+		control = vessel.control
+		nodes = control.nodes
+		assert(len(nodes) > 0)
+		node = nodes[0]
+		self.m_auto_pilot.reference_frame = node.reference_frame
+		self.m_node_flight = vessel.flight(node.reference_frame)
+		self.__m_node = node
+		
+	def __calcuateBurnTime(self):
+		vessel = self.m_vessel
+		# Calculate burn time (using rocket equation)
+		delta_v = self.__m_node.remaining_delta_v
+		F = vessel.available_thrust
+		Isp = vessel.specific_impulse * 9.82
+		m0 = vessel.mass
+		m1 = m0 / math.exp(delta_v/Isp)
+		flow_rate = F / Isp
+		burn_time = (m0 - m1) / flow_rate
+		return burn_time
+		
+	def waitTillBurnStart(self, space_center):
+		burn_time = self.__calcuateBurnTime()
+		
+		# Wait until burn
+		print('Waiting until circularization burn')
+		print(space_center.ut,self.__m_node.ut,burn_time)
+		burn_ut = self.__m_node.ut - (burn_time/2.)
+		lead_time = 5
+		print("Warping to",burn_ut - lead_time)
+		space_center.warp_to(burn_ut - lead_time)
+		print("Busy waiting for burn time")
+		while space_center.ut - burn_ut > 0:
+			time.sleep(0.01)
+		
+	def setTargetDirection(self):
+		self.m_auto_pilot.target_direction = self.__m_node.remaining_burn_vector(self.m_auto_pilot.reference_frame)
+		self.m_auto_pilot.wait()
+		
+	def shouldContinue(self):
+		return self.__m_node.remaining_delta_v > 0.1
+			
+	def burnSleepTime(self):
+		burn_time = self.__calcuateBurnTime()
+		return burn_time/2.0
+		
+class ProgradeInformation(ExecutionInformation):
+	def __init__(self, vessel):
+		super(ProgradeInformation,self).__init__(vessel)
+		self.m_auto_pilot.reference_frame = vessel.orbital_reference_frame
+		self.m_node_flight = orbit_flight
+	
+	def waitTillBurnStart(self, vessel, space_center):
+		pass
+		
+	def setTargetDirection(self):
+		auto_pilot.target_direction = (0,1,0)
+		
+	def shouldContinue(self):
+		return True
+		
+	def burnSleepTime(self):
+		return 1
+		
+class RollHandler(object):
+	def __init__(self, info):
+		self.m_info = info
+		
+	def setBestRoll(self):
+		roll = self.m_info.currentRoll()
+		generation = self.m_info.getGeneration()
+		
+		if generation > self.m_best_generation:
+			self.m_best_roll = roll
+			self.m_best_generation = generation
+			print("Updating best roll is",best_roll,"at",best_generation,"EC/s")
+			
+		self.m_info.roll(self.m_best_roll)
+			
+		#~ rotation = vessel.rotation(ref_frame)
+		#~ print("Rotation=",rotation)
+		#~ 
+		#~ rollControl = control.roll
+		#~ print("Roll control=",rollControl)
+		
+	def investigateBestRoll(self):
+		self.m_results = {}
+		self.m_best_generation = 0.0
+		self.m_best_roll = 0.0
+		
+		if self.m_info.getSolarCount() == 0:
+			print("No generation - skipping roll checks")
+			return
+		
+		results = {}
+		
+		def currentRoll():
+			return info.roll()
+		
+		target_roll = 0.0
+		while len(results) < 30:
+			info.roll(target_roll)
+			time.sleep(1)
+			
+			generation = self.m_info.getGeneration()
+			roll = self.m_info.roll()
+			
+			print(generation,"EC/s at roll=",roll)
+			self.m_results[roll] = generation
+			target_roll += 10
+			
+		best_roll = 0.0
+		best_generation = 0.0
+		for (roll,generation) in results.iteritems():
+			if generation > best_generation:
+				best_roll = roll
+				best_generation = generation
+				
+		print("Best roll is",best_roll,"at",best_generation,"EC/s")
+		info.roll(best_roll)
+		
+		self.m_best_generation = best_generation
+		self.m_best_roll = best_roll
 
 def main(argv):
 	"""
@@ -40,84 +194,31 @@ def main(argv):
 	orbit_flight = vessel.flight(vessel.orbital_reference_frame)
 	
 	results = {}
-	auto_pilot = vessel.auto_pilot
-	auto_pilot.engage()
-	#~ auto_pilot.sas = True	
 	
 	nodes = control.nodes
 	if "--pro" in argv:
-		auto_pilot.reference_frame = vessel.orbital_reference_frame
-		node_flight = orbit_flight
-		def setTargetDirection():
-			auto_pilot.target_direction = (0,1,0)
-			
-		def shouldContinue():
-			return True
-			
+		info = ProgradeInformation(vessel)
 	elif len(nodes) == 0:
 		print("No nodes to execute")
 		return 1
 	else:
-		node = nodes[0]
-		auto_pilot.reference_frame = node.reference_frame
-		node_flight = vessel.flight(node.reference_frame)
-		def setTargetDirection():
-			setTargetDirectionFromNode(auto_pilot,node)
-			
-		def shouldContinue():
-			return node.remaining_delta_v > 0.1
-			
-	setTargetDirection()
+		info = NodeInformation(vessel)
+		
+	info.setTargetDirection()
+	roller = RollHandler(info)
+	roller.investigateBestRoll()
 	
-	results = {}
+	info.waitTillBurnStart(space_center)
+	control.throttle = 1.0
 	
-	def currentRoll():
-		return node_flight.roll
-	
-	target_roll = 0.0
-	while len(results) < 30:
-		auto_pilot.target_roll = target_roll
-		time.sleep(1)
+	while info.shouldContinue():		
+		info.setTargetDirection()
+		roller.setBestRoll()
 		
-		generation = getGeneration(vessel)
-		roll = currentRoll()
-		
-		print(generation,"EC/s at roll=",roll)
-		results[roll] = generation
-		target_roll += 10
-		
-	best_roll = 0.0
-	best_generation = 0.0
-	for (roll,generation) in results.iteritems():
-		if generation > best_generation:
-			best_roll = roll
-			best_generation = generation
-			
-	print("Best roll is",best_roll,"at",best_generation,"EC/s")
-	auto_pilot.target_roll = best_roll
-	
-	while shouldContinue():		
-		setTargetDirection()
-		
-		roll = currentRoll()
-		generation = getGeneration(vessel)
-		
-		if generation > best_generation:
-			best_roll = roll
-			best_generation = generation
-			print("Updating best roll is",best_roll,"at",best_generation,"EC/s")
-			auto_pilot.target_roll = best_roll
-			
-		#~ rotation = vessel.rotation(ref_frame)
-		#~ print("Rotation=",rotation)
-		#~ 
-		#~ rollControl = control.roll
-		#~ print("Roll control=",rollControl)
-		
-		time.sleep(1)
+		time.sleep(info.burnSleepTime())
 		
 	control.throttle = 0.0
-	auto_pilot.disengage()
+	info.disengage_auto_pilot()
 
 	return 0
 
