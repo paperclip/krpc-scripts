@@ -1,5 +1,10 @@
+#!/bin/env python
 
 from __future__ import print_function,division,absolute_import,unicode_literals
+
+
+#~ SCREEN_RESOLUTION_WIDTH = 1810
+#~ SCREEN_RESOLUTION_HEIGHT = 1050
 
 import krpc
 
@@ -74,7 +79,9 @@ class Miner2(object):
             charge = electric_charge()
             if charge > 0:
                 if displayCount == 0:
-                    print("EC:",charge,"mining=",mining,"converting=",converting)
+                    print("EC:",charge,"EC/s:",generation,"mining=",mining,"converting=",converting)
+                    if nextAlarm is not None:
+                        print("Next alarm in %f seconds: %s"%(remainingBeforeAlarm,nextAlarm.name))
                     displayCount = BEGIN
                 else:
                     displayCount -= 1
@@ -120,10 +127,6 @@ class Miner2(object):
             elif self.isOreFull() and not converting:
                 converting = self.startConverting()
                 self.changeSpeed(HIGH_SPEED)
-            elif displayCount == 1:
-                print("EC/s:",generation)
-                if nextAlarm is not None:
-                    print("Next alarm in %f seconds: %s"%(remainingBeforeAlarm,nextAlarm.name))
 
         return 0
 
