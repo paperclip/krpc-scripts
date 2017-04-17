@@ -23,9 +23,9 @@ class ExecutionInformation(object):
         auto_pilot.engage()
         self.m_auto_pilot = auto_pilot
         self.m_node_flight = None
-        
+
     def vessel(self):
-		return self.m_vessel
+        return self.m_vessel
 
     def currentRoll(self):
         return self.m_node_flight.roll
@@ -40,6 +40,18 @@ class ExecutionInformation(object):
 
     def getSolarCount(self):
         return len(self.m_vessel.parts.solar_panels)
+
+    def hasSolarPanels(self):
+        return self.getSolarCount() > 0
+
+    def hasIonDrive(self):
+        engines = self.m_vessel.parts.engines
+        for engine in engines:
+            if not engine.active:
+                continue
+            if u'ElectricCharge' in engine.propellant_names:
+                return True
+        return False
 
     def disengage_auto_pilot(self):
         self.m_auto_pilot.disengage()
@@ -79,7 +91,7 @@ class NodeInformation(ExecutionInformation):
         burn_time = self.__calcuateBurnTime()
 
         # Wait until burn
-        print('Waiting until circularization burn')
+        print('Waiting until burn')
         print(self.m_space_center.ut,self.__m_node.ut,burn_time)
         burn_ut = self.__m_node.ut - (burn_time/2.)
         lead_time = 5
@@ -109,7 +121,7 @@ class NodeInformation(ExecutionInformation):
         return True
 
     def burnSleepTime(self):
-        burn_time = self.__calcuateBurnTime()
+        burn_time = max(0.1,self.__calcuateBurnTime())
         return burn_time/(8.0)  ## *self.m_space_center.warp_rate)
 
 class ProgradeInformation(ExecutionInformation):
@@ -131,7 +143,12 @@ class ProgradeInformation(ExecutionInformation):
         return 10
 
 class RollHandler(object):
-    def __init__(self, info):
+    def __init__(self):
+        self.m_results = {}
+        self.m_best_generation = 0.0
+        self.m_best_roll = 0.0
+
+    def setInfo(self, info):
         self.m_info = info
 
     def setBestRoll(self):
@@ -141,7 +158,7 @@ class RollHandler(object):
         if generation > self.m_best_generation:
             self.m_best_roll = roll
             self.m_best_generation = generation
-            print("Updating best roll is",best_roll,"at",best_generation,"EC/s")
+            print("Updating best roll is",self.m_best_roll,"at",self.m_best_generation,"EC/s")
 
         self.m_info.roll(self.m_best_roll)
 
@@ -152,21 +169,21 @@ class RollHandler(object):
         #~ print("Roll control=",rollControl)
 
     def investigateBestRoll(self):
-        self.m_results = {}
-        self.m_best_generation = 0.0
-        self.m_best_roll = 0.0
+        info = self.m_info
 
-        if self.m_info.getSolarCount() == 0:
+        if not self.m_info.hasSolarPanels():
             print("No generation - skipping roll checks")
             return
 
-        results = {}
+        if not self.m_info.hasIonDrive():
+            print("No ion drive - skipping roll checks")
+            return
 
         def currentRoll():
             return info.roll()
 
         target_roll = 0.0
-        while len(results) < 30:
+        while len(self.m_results) < 30:
             info.roll(target_roll)
             time.sleep(1)
 
@@ -179,7 +196,7 @@ class RollHandler(object):
 
         best_roll = 0.0
         best_generation = 0.0
-        for (roll,generation) in results.iteritems():
+        for (roll,generation) in self.m_results.iteritems():
             if generation > best_generation:
                 best_roll = roll
                 best_generation = generation
@@ -190,42 +207,46 @@ class RollHandler(object):
         self.m_best_generation = best_generation
         self.m_best_roll = best_roll
 
-def executeInfo(conn, vessel, info):
+def executeInfo(conn, vessel, info, roller=None):
     space_center = conn.space_center
     control = vessel.control
 
     info.setTargetDirection()
-    roller = RollHandler(info)
+    if roller is None:
+        roller = RollHandler()
+
+    roller.setInfo(info)
     roller.investigateBestRoll()
 
     info.waitTillBurnStart()
     print("Starting burn")
     control.throttle = 1.0
-    space_center.physics_warp_factor = 3
+    try:
+        space_center.physics_warp_factor = 3
 
-    while info.shouldContinue():
-        info.setTargetDirection()
-        roller.setBestRoll()
+        while info.shouldContinue():
+            info.setTargetDirection()
+            roller.setBestRoll()
 
-        sleepTime = info.burnSleepTime()
-        if sleepTime < 3:
-            space_center.physics_warp_factor = 0
+            sleepTime = info.burnSleepTime()
+            if sleepTime < 3:
+                space_center.physics_warp_factor = 0
 
-        time.sleep(sleepTime)
-
-    print("Finishing burn")
-    control.throttle = 0.0
-    space_center.rails_warp_factor = 0
-    space_center.physics_warp_factor = 0
-    info.disengage_auto_pilot()
+            time.sleep(sleepTime)
+    finally:
+        print("Finishing burn")
+        control.throttle = 0.0
+        space_center.rails_warp_factor = 0
+        space_center.physics_warp_factor = 0
+        info.disengage_auto_pilot()
 
     return 0
 
-def executeNextNode(conn):
+def executeNextNode(conn, roller=None):
     space_center = conn.space_center
     vessel = space_center.active_vessel
     info = NodeInformation(vessel, space_center)
-    return executeInfo(conn, vessel, info)
+    return executeInfo(conn, vessel, info, roller)
 
 def main(argv):
     """

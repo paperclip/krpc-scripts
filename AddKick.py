@@ -65,11 +65,13 @@ def main(argv):
     if len(argv) > 1:
         count = int(argv[1])
 
+    roller = NodeExecute.RollHandler()
+
     while count > 0:
         node = addKick(conn, 120)
 
         ## Execute node
-        NodeExecute.executeNextNode(conn)
+        NodeExecute.executeNextNode(conn,roller)
 
         node.remove()
 
