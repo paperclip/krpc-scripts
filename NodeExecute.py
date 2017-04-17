@@ -23,6 +23,9 @@ class ExecutionInformation(object):
         auto_pilot.engage()
         self.m_auto_pilot = auto_pilot
         self.m_node_flight = None
+        
+    def vessel(self):
+		return self.m_vessel
 
     def currentRoll(self):
         return self.m_node_flight.roll
